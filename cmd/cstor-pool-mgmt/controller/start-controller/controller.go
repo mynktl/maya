@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The OpenEBS Authors.
+Copyright 2019 The OpenEBS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,16 +29,15 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	backupcontroller "github.com/openebs/maya/cmd/cstor-pool-mgmt/controller/backup-controller"
+	backupcontroller "github.com/openebs/maya/cmd/cstor-pool-mgmt/controller/backup"
 	"github.com/openebs/maya/cmd/cstor-pool-mgmt/controller/common"
 	poolcontroller "github.com/openebs/maya/cmd/cstor-pool-mgmt/controller/pool-controller"
 	replicacontroller "github.com/openebs/maya/cmd/cstor-pool-mgmt/controller/replica-controller"
 	"github.com/openebs/maya/cmd/cstor-pool-mgmt/pool"
-
-	//clientset "github.com/openebs/maya/pkg/client/clientset/versioned"
 	clientset "github.com/openebs/maya/pkg/client/generated/clientset/internalclientset"
-	//informers "github.com/openebs/maya/pkg/client/informers/externalversions"
 	informers "github.com/openebs/maya/pkg/client/generated/informer/externalversions"
+	backupclientset "github.com/openebs/maya/pkg/client/generated/openebs.io/backup/v1alpha1/clientset/internalclientset"
+	backupinformer "github.com/openebs/maya/pkg/client/generated/openebs.io/backup/v1alpha1/informer/externalversions"
 	"github.com/openebs/maya/pkg/signals"
 )
 
@@ -70,6 +69,11 @@ func StartControllers(kubeconfig string) {
 		glog.Fatalf("Error building openebs clientset: %s", err.Error())
 	}
 
+	backupClient, err := backupclientset.NewForConfig(cfg)
+	if err != nil {
+		glog.Fatalf("Error building openebs clientset: %s", err.Error())
+	}
+
 	common.Init()
 
 	// Blocking call for checking status of zrepl running in cstor-pool container.
@@ -95,6 +99,8 @@ func StartControllers(kubeconfig string) {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(kubeClient, getSyncInterval())
 	// openebsInformerFactory constructs a new instance of openebs sharedInformerFactory.
 	openebsInformerFactory := informers.NewSharedInformerFactory(openebsClient, getSyncInterval())
+	// backupInformerFactory constructs a new instance of backup sharedInformerFactory.
+	backupInformerFactory := backupinformer.NewSharedInformerFactory(backupClient, getSyncInterval())
 
 	// Instantiate the cStor Pool and VolumeReplica controllers.
 	cStorPoolController := poolcontroller.NewCStorPoolController(kubeClient, openebsClient, kubeInformerFactory,
@@ -104,11 +110,12 @@ func StartControllers(kubeconfig string) {
 		openebsInformerFactory)
 
 	// Instantiate the cStor backup controller
-	backupController := backupcontroller.NewBackupCStorController(kubeClient, openebsClient, kubeInformerFactory,
-		openebsInformerFactory)
+	backupController := backupcontroller.NewCStorBackupController(kubeClient, backupClient, kubeInformerFactory,
+		backupInformerFactory)
 
 	go kubeInformerFactory.Start(stopCh)
 	go openebsInformerFactory.Start(stopCh)
+	go backupInformerFactory.Start(stopCh)
 
 	// Waitgroup for starting pool and VolumeReplica controller goroutines.
 	var wg sync.WaitGroup

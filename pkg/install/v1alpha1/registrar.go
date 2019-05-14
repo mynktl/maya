@@ -82,5 +82,8 @@ func RegisteredArtifacts() (list artifactList) {
 	list.Items = append(list.Items, StoragePoolArtifacts().Items...)
 
 	list.Items = append(list.Items, VolumeStatsArtifacts().Items...)
+
+	// CStor Backup
+	list.Items = append(list.Items, CStorBackupArtifacts().Items...)
 	return
 }

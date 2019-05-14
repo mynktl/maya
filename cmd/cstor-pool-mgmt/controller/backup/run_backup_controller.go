@@ -1,5 +1,5 @@
 /*
-Copyright 2018 The OpenEBS Authors.
+Copyright 2019 The OpenEBS Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package backupcontroller
+package backup
 
 import (
 	"fmt"
@@ -30,12 +30,12 @@ import (
 // as syncing informer caches and starting workers. It will block until stopCh
 // is closed, at which point it will shutdown the workqueue and wait for
 // workers to finish processing their current work items.
-func (c *BackupController) Run(threadiness int, stopCh <-chan struct{}) error {
+func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 	defer runtime.HandleCrash()
 	defer c.workqueue.ShutDown()
 
 	// Start the informer factories to begin populating the informer caches
-	glog.Info("Starting BackupCStor controller")
+	glog.Info("Starting CStorBackup controller")
 
 	// Wait for the k8s caches to be synced before starting workers
 	glog.Info("Waiting for informer caches to sync")
@@ -60,14 +60,14 @@ func (c *BackupController) Run(threadiness int, stopCh <-chan struct{}) error {
 // runWorker is a long-running function that will continually call the
 // processNextWorkItem function in order to read and process a message on the
 // workqueue.
-func (c *BackupController) runWorker() {
+func (c *Controller) runWorker() {
 	for c.processNextWorkItem() {
 	}
 }
 
 // processNextWorkItem will read a single work item off the workqueue and
-// attempt to process it, by calling the syncHandler.
-func (c *BackupController) processNextWorkItem() bool {
+// attempt to process it, by calling the reconcile.
+func (c *Controller) processNextWorkItem() bool {
 	obj, shutdown := c.workqueue.Get()
 
 	if shutdown {
@@ -98,9 +98,9 @@ func (c *BackupController) processNextWorkItem() bool {
 			runtime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
 			return nil
 		}
-		// Run the syncHandler, passing it the namespace/name string of the
-		// BackupCStor resource to be synced.
-		if err := c.syncHandler(q.Key, q.Operation); err != nil {
+		// Run the processBackup , passing it the namespace/name string of the
+		// CStorBackup resource to be synced.
+		if err := c.processBackup(q.Key, q.Operation); err != nil {
 			return fmt.Errorf("error syncing '%s': %s", q.Key, err.Error())
 		}
 		// Finally, if no error occurs we Forget this item so it does not

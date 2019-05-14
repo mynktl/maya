@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 
 	"github.com/golang/glog"
+	backupapi "github.com/openebs/maya/pkg/apis/openebs.io/backup/v1alpha1"
 	apis "github.com/openebs/maya/pkg/apis/openebs.io/v1alpha1"
 	"github.com/openebs/maya/pkg/util"
 )
@@ -197,10 +198,11 @@ func builldVolumeCloneCommand(cStorVolumeReplica *apis.CStorVolumeReplica, snapN
 }
 
 // CreateVolumeBackup sends cStor snapshots to remote location specified by backupcstor.
-func CreateVolumeBackup(bkp *apis.BackupCStor) error {
+func CreateVolumeBackup(bkp *backupapi.CStorBackup) error {
 	var cmd []string
 	var retryCount int
 	var err error
+	var stdoutStderr []byte
 
 	// Parse capacity unit on CVR to support backward compatibility
 	cmd = builldVolumeBackupCommand(bkp.ObjectMeta.Labels["cstorpool.openebs.io/uid"], bkp.Spec.VolumeName, bkp.Spec.PrevSnapName, bkp.Spec.SnapName, bkp.Spec.BackupDest)
@@ -208,7 +210,7 @@ func CreateVolumeBackup(bkp *apis.BackupCStor) error {
 	glog.Infof("Backup Command for volume: %v created, Cmd: %v\n", bkp.Spec.VolumeName, cmd)
 
 	for retryCount < MaxBackupRetryCount {
-		stdoutStderr, err := RunnerVar.RunCombinedOutput("/usr/local/bin/execute.sh", cmd...)
+		stdoutStderr, err = RunnerVar.RunCombinedOutput("/usr/local/bin/execute.sh", cmd...)
 		if err != nil {
 			glog.Errorf("Unable to start backup %s. error : %v retry:%v :%s", bkp.Spec.VolumeName, string(stdoutStderr), retryCount, err.Error())
 			retryCount++
