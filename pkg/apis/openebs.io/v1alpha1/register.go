@@ -62,12 +62,6 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&CASTemplateList{},
 		&CStorVolume{},
 		&CStorVolumeList{},
-		&CStorBackup{},
-		&CStorCompletedBackup{},
-		&CStorBackupList{},
-		&CStorCompletedBackupList{},
-		&CStorRestore{},
-		&CStorRestoreList{},
 		&Disk{},
 		&DiskList{},
 	)

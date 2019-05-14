@@ -307,7 +307,7 @@ func (s *HTTPServer) registerHandlers(serviceProvider string, enableDebug bool) 
 	s.mux.HandleFunc("/latest/snapshots/", s.wrap(latestOpenEBSSnapshotRequestCounter,
 		latestOpenEBSSnapshotRequestDuration, s.snapshotV1alpha1SpecificRequest))
 
-	// Request w.r.t to backup is handled here
+	// Request w.r.t backup is handled here
 	s.mux.HandleFunc("/latest/backups/", s.wrap(latestOpenEBSBackupRequestCounter,
 		latestOpenEBSBackupRequestDuration, s.backupV1alpha1SpecificRequest))
 

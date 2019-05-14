@@ -13,14 +13,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package restorecontroller
+package restore
 
 import (
 	"testing"
 	"time"
 
-	openebsFakeClientset "github.com/openebs/maya/pkg/client/generated/clientset/internalclientset/fake"
-	informers "github.com/openebs/maya/pkg/client/generated/informer/externalversions"
+	openebsFakeClientset "github.com/openebs/maya/pkg/client/generated/openebs.io/restore/v1alpha1/clientset/internalclientset/fake"
+	informers "github.com/openebs/maya/pkg/client/generated/openebs.io/restore/v1alpha1/informer/externalversions"
 
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
@@ -36,7 +36,7 @@ func TestNewCStorRestoreController(t *testing.T) {
 	openebsInformerFactory := informers.NewSharedInformerFactory(fakeOpenebsClient, time.Second*30)
 
 	// Instantiate the cStor Restore controllers.
-	restoreController := NewCStorRestoreController(fakeKubeClient, fakeOpenebsClient, kubeInformerFactory,
+	restoreController := NewController(fakeKubeClient, fakeOpenebsClient, kubeInformerFactory,
 		openebsInformerFactory)
 
 	if restoreController.kubeclientset != fakeKubeClient {

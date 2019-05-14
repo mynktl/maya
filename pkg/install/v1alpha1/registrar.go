@@ -83,7 +83,8 @@ func RegisteredArtifacts() (list artifactList) {
 
 	list.Items = append(list.Items, VolumeStatsArtifacts().Items...)
 
-	// Local PV Artifacts
-	list.Items = append(list.Items, LocalPVArtifacts().Items...)
+	// CStor Backup/Restore
+	list.Items = append(list.Items, CStorBackupArtifacts().Items...)
+	list.Items = append(list.Items, CStorRestoreArtifacts().Items...)
 	return
 }

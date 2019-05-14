@@ -14,14 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package restorecontroller
+package restore
 
 import (
-	"os"
-
 	"github.com/golang/glog"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	kubeinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -32,22 +29,22 @@ import (
 	"k8s.io/client-go/util/workqueue"
 
 	"github.com/openebs/maya/cmd/cstor-pool-mgmt/controller/common"
-	apis "github.com/openebs/maya/pkg/apis/openebs.io/v1alpha1"
-
-	clientset "github.com/openebs/maya/pkg/client/generated/clientset/internalclientset"
-	openebsScheme "github.com/openebs/maya/pkg/client/generated/clientset/internalclientset/scheme"
-	informers "github.com/openebs/maya/pkg/client/generated/informer/externalversions"
+	restoreapi "github.com/openebs/maya/pkg/apis/openebs.io/restore/v1alpha1"
+	restoreclientset "github.com/openebs/maya/pkg/client/generated/openebs.io/restore/v1alpha1/clientset/internalclientset"
+	restoreScheme "github.com/openebs/maya/pkg/client/generated/openebs.io/restore/v1alpha1/clientset/internalclientset/scheme"
+	informers "github.com/openebs/maya/pkg/client/generated/openebs.io/restore/v1alpha1/informer/externalversions"
+	restore "github.com/openebs/maya/pkg/restore/v1alpha1"
 )
 
-const restoreControllerName = "CStorRestore"
+const controllerName = "CStorRestore"
 
-// RestoreController is the controller implementation for CStorRestore resources.
-type RestoreController struct {
+// Controller is the controller implementation for CStorRestore resources.
+type Controller struct {
 	// kubeclientset is a standard kubernetes clientset.
 	kubeclientset kubernetes.Interface
 
 	// clientset is a openebs custom resource package generated for custom API group.
-	clientset clientset.Interface
+	clientset restoreclientset.Interface
 
 	// RestoreSynced is used for caches sync to get populated
 	RestoreSynced cache.InformerSynced
@@ -63,25 +60,23 @@ type RestoreController struct {
 	recorder record.EventRecorder
 }
 
-// NewCStorRestoreController returns a new cStor restore controller instance
-func NewCStorRestoreController(
+// NewController returns a new cStor restore controller instance
+func NewController(
 	kubeclientset kubernetes.Interface,
-	clientset clientset.Interface,
+	clientset restoreclientset.Interface,
 	kubeInformerFactory kubeinformers.SharedInformerFactory,
-	cStorInformerFactory informers.SharedInformerFactory) *RestoreController {
+	rstInformerFactory informers.SharedInformerFactory) *Controller {
 
 	// obtain references to shared index informers for the CStorRestore resources.
-	CStorRestoreInformer := cStorInformerFactory.Openebs().V1alpha1().CStorRestores()
+	RestoreInformer := rstInformerFactory.Openebs().V1alpha1().CStorRestores()
 
-	err := openebsScheme.AddToScheme(scheme.Scheme)
+	err := restoreScheme.AddToScheme(scheme.Scheme)
 	if err != nil {
-		glog.Errorf("Failed to add scheme :%v", err.Error())
+		glog.Errorf("Failed to add restore scheme : %s", err.Error())
 		return nil
 	}
 
 	// Create event broadcaster
-	// Add cStor-Replica-controller types to the default Kubernetes Scheme so Events can be
-	// logged for cStor-Replica-controller types.
 	glog.V(4).Info("Creating restore event broadcaster")
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(glog.Infof)
@@ -90,12 +85,13 @@ func NewCStorRestoreController(
 	// event handler function. The return value can be ignored or used to stop recording, if
 	// desired. Events("") denotes empty namespace
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeclientset.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: restoreControllerName})
 
-	controller := &RestoreController{
+	recorder := eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerName})
+
+	controller := &Controller{
 		kubeclientset: kubeclientset,
 		clientset:     clientset,
-		RestoreSynced: CStorRestoreInformer.Informer().HasSynced,
+		RestoreSynced: RestoreInformer.Informer().HasSynced,
 		workqueue:     workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "CStorRestore"),
 		recorder:      recorder,
 	}
@@ -109,53 +105,28 @@ func NewCStorRestoreController(
 	q := common.QueueLoad{}
 
 	// Set up an event handler for when cStorReplica resources change.
-	CStorRestoreInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	RestoreInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			// ToDo : Enqueue object for processing in case of added event
-			// Note: AddFunc is called when a new object comes into etcd
-			// Note : In case controller reboots and existing object in etcd can cause delivery of
-			// add event when the controller comes again. Be careful in this part and handle accordingly.
-			rst := obj.(*apis.CStorRestore)
-
-			if !IsRightCStorPoolMgmt(rst) {
-				return
-			}
-
-			controller.handleRSTAddEvent(rst, &q)
+			controller.restoreAddFunc(obj, &q)
 		},
 		UpdateFunc: func(oldVar, newVar interface{}) {
-			// Note : UpdateFunc is called in following three cases:
-			// 1. When object is updated/patched i.e. Resource version of object changes.
-			// 2. When object is deleted i.e. the deletion timestamp of object is set.
-			// 3. After every resync interval.
-			newrst := newVar.(*apis.CStorRestore)
-			oldrst := oldVar.(*apis.CStorRestore)
-
-			if !IsRightCStorPoolMgmt(newrst) {
-				return
-			}
-
-			controller.handleRSTUpdateEvent(oldrst, newrst, &q)
+			controller.restoreUpdateFunc(oldVar, newVar, &q)
 		},
 		DeleteFunc: func(obj interface{}) {
-			rst := obj.(*apis.CStorRestore)
-			if !IsRightCStorPoolMgmt(rst) {
-				return
-			}
-			glog.Infof("Restore resource deleted event: %v, %v", rst.ObjectMeta.Name, string(rst.ObjectMeta.UID))
-
+			controller.restoreDeleteFunc(obj)
 		},
 	})
+	glog.Infof("done with new")
 	return controller
 }
 
 // enqueueCStorRestore takes a CStorRestore resource and converts it into a namespace/name
 // string which is then put onto the work queue. This method should *not* be
 // passed resources of any type other than CStorRestore.
-func (c *RestoreController) enqueueCStorRestore(obj *apis.CStorRestore, q common.QueueLoad) {
+func (c *Controller) enqueueCStorRestore(rst *restore.CStorRestore, q common.QueueLoad) {
 	var key string
 	var err error
-	if key, err = cache.MetaNamespaceKeyFunc(obj); err != nil {
+	if key, err = cache.MetaNamespaceKeyFunc(rst.GetRestoreAPIObject()); err != nil {
 		runtime.HandleError(err)
 		return
 	}
@@ -163,69 +134,120 @@ func (c *RestoreController) enqueueCStorRestore(obj *apis.CStorRestore, q common
 	c.workqueue.AddRateLimited(q)
 }
 
-// handleRSTAddEvent is to handle add operation of restore controller
-func (c *RestoreController) handleRSTAddEvent(rst *apis.CStorRestore, q *common.QueueLoad) {
+// restoreAddFunc is to handle add operation of restore controller
+func (c *Controller) restoreAddFunc(newr interface{}, q *common.QueueLoad) {
+	r := newr.(*restoreapi.CStorRestore)
+
+	rst, err := restore.NewCStorRestoreBuilder().
+		BuildFromAPIObject(r)
+	if err != nil {
+		glog.Errorf("Failed to build object for restore{%s}: %s", r.Name, err.Error())
+		return
+	}
+
+	if !rst.IsRightCStorPoolMgmt() {
+		return
+	}
+
 	q.Operation = common.QOpAdd
-	glog.Infof("cStorRestore event added: %v, %v", rst.ObjectMeta.Name, string(rst.ObjectMeta.UID))
-	c.recorder.Event(rst, corev1.EventTypeNormal, string(common.SuccessSynced), string(common.MessageCreateSynced))
+	c.recorder.Event(
+		rst.GetRestoreAPIObject(),
+		corev1.EventTypeNormal,
+		string(common.SuccessSynced),
+		string(common.MessageCreateSynced))
 	c.enqueueCStorRestore(rst, *q)
+	glog.Infof("CStorRestore add-event for restore{%s}", rst.GetObjName())
 }
 
-func (c *RestoreController) handleRSTUpdateEvent(oldrst, newrst *apis.CStorRestore, q *common.QueueLoad) {
-	glog.Infof("Received Update for restore:%s", oldrst.ObjectMeta.Name)
+func (c *Controller) restoreUpdateFunc(oldr, newr interface{}, q *common.QueueLoad) {
+	newrst := newr.(*restoreapi.CStorRestore)
+	oldrst := oldr.(*restoreapi.CStorRestore)
 
 	// If there is no change in status then we will ignore the event
 	if newrst.Status == oldrst.Status {
 		return
 	}
 
-	if IsDoneStatus(newrst) || IsFailedStatus(newrst) {
+	rst, err := restore.NewCStorRestoreBuilder().BuildFromAPIObject(newrst)
+	if err != nil {
+		glog.Errorf("Failed to build object for restore{%s}: %s", newrst.Name, err.Error())
 		return
 	}
 
-	if IsDestroyEvent(newrst) {
-		q.Operation = common.QOpDestroy
-		glog.Infof("cStorRestore Destroy event : %v, %v", newrst.ObjectMeta.Name, string(newrst.ObjectMeta.UID))
-		c.recorder.Event(newrst, corev1.EventTypeNormal, string(common.SuccessSynced), string(common.MessageDestroySynced))
-	} else {
-		glog.Infof("cStorRestore Modify event : %v, %v", newrst.ObjectMeta.Name, string(newrst.ObjectMeta.UID))
-
-		q.Operation = common.QOpSync
-		c.recorder.Event(newrst, corev1.EventTypeNormal, string(common.SuccessSynced), string(common.MessageModifySynced))
-		glog.Infof("Done modify event %v", newrst.Name)
+	if !rst.IsRightCStorPoolMgmt() {
+		return
 	}
-	c.enqueueCStorRestore(newrst, *q)
+
+	if rst.IsDestroyEvent() {
+		q.Operation = common.QOpDestroy
+		glog.Infof("Destroy event for restore{%s}", rst.GetObjName())
+		//TODO change event type during event record operation
+		c.recorder.Event(
+			rst.GetRestoreAPIObject(),
+			corev1.EventTypeNormal,
+			string(common.SuccessSynced),
+			string(common.MessageDestroySynced))
+	} else {
+		glog.Infof("Modify event for restore{%s}", rst.GetObjName())
+		q.Operation = common.QOpSync
+		c.recorder.Event(
+			rst.GetRestoreAPIObject(),
+			corev1.EventTypeNormal,
+			string(common.SuccessSynced),
+			string(common.MessageModifySynced))
+	}
+	c.enqueueCStorRestore(rst, *q)
 }
 
 // cleanupOldRestore set fail status to old pending restore
-func (c *RestoreController) cleanupOldRestore(clientset clientset.Interface) {
-	rstlabel := "cstorpool.openebs.io/uid=" + os.Getenv(string(common.OpenEBSIOCStorID))
-	rstlistop := metav1.ListOptions{
-		LabelSelector: rstlabel,
-	}
-	rstlist, err := clientset.OpenebsV1alpha1().CStorRestores(metav1.NamespaceAll).List(rstlistop)
+func (c *Controller) cleanupOldRestore(clientset restoreclientset.Interface) {
+	//TODO add option for lable
+	/*
+		rstlabel := "cstorpool.openebs.io/uid=" + os.Getenv(string(common.OpenEBSIOCStorID))
+		rstlistop := metav1.ListOptions{
+			LabelSelector: rstlabel,
+		}
+	*/
+
+	rstlist, err := restore.NewCStorRestoreListBuilder().
+		WithClientSet(nil).
+		Build()
 	if err != nil {
+		glog.Errorf("Failed to build restore list : %s", err.Error())
 		return
 	}
 
-	for _, rst := range rstlist.Items {
-		switch rst.Status {
-		case apis.RSTCStorStatusDone:
+	for _, rst := range rstlist.Item {
+		switch rst.GetStatus() {
+		case restoreapi.RSTCStorStatusDone:
 			continue
+
 		default:
 			//Set restore status as failed
-			updateRestoreStatus(clientset, rst, apis.RSTCStorStatusFailed)
+			rst.SetStatus(restoreapi.RSTCStorStatusFailed)
+			_, err = rst.UpdateCR(rst)
+			if err != nil {
+				glog.Errorf("Failed to update status for restore{%s} to {%s} : %s",
+					rst.GetObjName(),
+					restoreapi.RSTCStorStatusFailed,
+					err.Error())
+			}
 		}
 	}
 }
 
-// updateRestoreStatus will update the restore status to given status
-func updateRestoreStatus(clientset clientset.Interface, rst apis.CStorRestore, status apis.CStorRestoreStatus) {
-	rst.Status = status
+func (c *Controller) restoreDeleteFunc(obj interface{}) {
+	rst := obj.(*restoreapi.CStorRestore)
 
-	_, err := clientset.OpenebsV1alpha1().CStorRestores(rst.Namespace).Update(&rst)
+	r, err := restore.NewCStorRestoreBuilder().BuildFromAPIObject(rst)
 	if err != nil {
-		glog.Errorf("Failed to update restore(%s) status(%s)", status, rst.Name)
+		glog.Errorf("Failed to build object for restore{%s}: %s", rst.Name, err.Error())
 		return
 	}
+
+	if !r.IsRightCStorPoolMgmt() {
+		return
+	}
+	glog.Infof("Delete event for restore{%s}", r.GetObjName())
+	//TODO add delete event handling
 }

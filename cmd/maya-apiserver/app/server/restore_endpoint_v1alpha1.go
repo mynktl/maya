@@ -20,14 +20,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/golang/glog"
-	"github.com/openebs/maya/pkg/apis/openebs.io/v1alpha1"
-	"github.com/openebs/maya/pkg/client/generated/clientset/internalclientset"
+	restoreapi "github.com/openebs/maya/pkg/apis/openebs.io/restore/v1alpha1"
+	restore "github.com/openebs/maya/pkg/restore/v1alpha1"
+	"github.com/pkg/errors"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/client-go/kubernetes"
 )
 
 type restoreAPIOps struct {
@@ -54,86 +54,82 @@ func (s *HTTPServer) restoreV1alpha1SpecificRequest(resp http.ResponseWriter, re
 // Create is http handler which handles restore-create request
 func (rOps *restoreAPIOps) create() (interface{}, error) {
 	var err error
-	var openebsClient *internalclientset.Clientset
-	restore := &v1alpha1.CStorRestore{}
-	err = decodeBody(rOps.req, restore)
+	crestore := &restoreapi.CStorRestore{}
+	err = decodeBody(rOps.req, crestore)
 	if err != nil {
 		return nil, err
 	}
 
-	// namespace is expected
-	if len(strings.TrimSpace(restore.Namespace)) == 0 {
-		return nil, CodedError(400, fmt.Sprintf("failed to create restore '%v': missing namespace", restore.Name))
-	}
-
-	// restore name is expected
-	if len(strings.TrimSpace(restore.Spec.RestoreName)) == 0 {
-		return nil, CodedError(400, fmt.Sprintf("failed to create restore: missing restore name "))
-	}
-
-	// volume name is expected
-	if len(strings.TrimSpace(restore.Spec.VolumeName)) == 0 {
-		return nil, CodedError(400, fmt.Sprintf("failed to create restore '%v': missing volume name", restore.Name))
-	}
-
-	// restoreIP is expected
-	if len(strings.TrimSpace(restore.Spec.RestoreSrc)) == 0 {
-		return nil, CodedError(400, fmt.Sprintf("failed to create restore '%v': missing restoreSrc", restore.Name))
-	}
-
-	openebsClient, _, err = loadClientFromServiceAccount()
+	restore, err := restore.NewCStorRestoreBuilder().
+		WithCheck(restore.IsRestoreNameSet()).
+		WithCheck(restore.IsVolumeNameSet()).
+		WithCheck(restore.IsNamespaceSet()).
+		WithCheck(restore.IsRestoreSrcSet()).
+		WithClientSet(nil).
+		BuildFromAPIObject(crestore)
 	if err != nil {
-		return nil, CodedError(400, fmt.Sprintf("Failed to load openebs client:{%v}", err))
+		return nil, CodedError(400, fmt.Sprintf("Failed to parse restore request : %s", err.Error()))
 	}
 
-	return createRestoreResource(openebsClient, restore)
+	return createRestoreResource(restore)
 }
 
 // createRestoreResource create restore CR for volume's CVR
-func createRestoreResource(openebsClient *internalclientset.Clientset, rst *v1alpha1.CStorRestore) (interface{}, error) {
+func createRestoreResource(rst *restore.CStorRestore) (interface{}, error) {
 	//Get List of cvr's related to this pvc
 	listOptions := v1.ListOptions{
-		LabelSelector: "openebs.io/persistent-volume=" + rst.Spec.VolumeName,
+		LabelSelector: "openebs.io/persistent-volume=" + rst.GetVolumeName(),
 	}
-	cvrList, err := openebsClient.OpenebsV1alpha1().CStorVolumeReplicas("").List(listOptions)
+
+	clientset, err := getOpenEBSClient()
 	if err != nil {
 		return nil, CodedError(500, err.Error())
 	}
 
+	cvrList, err := clientset.OpenebsV1alpha1().CStorVolumeReplicas("").List(listOptions)
+	if err != nil {
+		return nil, CodedError(500, fmt.Sprintf("Failed to fetch CVR list : %s", err.Error()))
+	}
+
 	for _, cvr := range cvrList.Items {
-		rst.Name = rst.Spec.RestoreName + "-" + string(uuid.NewUUID())
-		oldrst, err := openebsClient.OpenebsV1alpha1().CStorRestores(rst.Namespace).Get(rst.Name, v1.GetOptions{})
+		rst.RegenerateObjName()
+		oldrst, err := rst.GetCR(rst.GetObjName())
 		if err != nil {
-			rst.Status = v1alpha1.RSTCStorStatusPending
-			rst.ObjectMeta.Labels = map[string]string{
+			rst.SetStatus(restoreapi.RSTCStorStatusPending)
+			rst.SetLabel(map[string]string{
 				"cstorpool.openebs.io/uid":     cvr.ObjectMeta.Labels["cstorpool.openebs.io/uid"],
 				"openebs.io/persistent-volume": cvr.ObjectMeta.Labels["openebs.io/persistent-volume"],
-				"openebs.io/restore":           rst.Spec.RestoreName,
-			}
+				"openebs.io/restore":           rst.GetRestoreName(),
+			})
 
-			_, err = openebsClient.OpenebsV1alpha1().CStorRestores(rst.Namespace).Create(rst)
+			_, err = rst.CreateCR(rst)
 			if err != nil {
-				glog.Errorf("Failed to create restore CR(volume:%s CSP:%s) : error '%s'",
-					rst.Spec.VolumeName, cvr.ObjectMeta.Labels["cstorpool.openebs.io/uid"],
+				glog.Errorf("Failed to create restore CR(volume:%s CSP:%s) : %s",
+					rst.GetVolumeName(), cvr.ObjectMeta.Labels["cstorpool.openebs.io/uid"],
 					err.Error())
 				return nil, CodedError(500, err.Error())
 			}
-			glog.Infof("Restore:%s created for volume %q poolUUID:%v", rst.Name,
-				rst.Spec.VolumeName,
-				rst.ObjectMeta.Labels["cstorpool.openebs.io/uid"])
+			glog.Infof("Restore{%s} created for volume{%s} poolUUID{%s}", rst.GetObjName(),
+				rst.GetVolumeName(),
+				rst.GetLabel("cstorpool.openebs.io/uid"))
 		} else {
-			oldrst.Status = v1alpha1.RSTCStorStatusPending
-			oldrst.Spec = rst.Spec
-			_, err = openebsClient.OpenebsV1alpha1().CStorRestores(oldrst.Namespace).Update(oldrst)
+			oldrst.SetStatus(restoreapi.RSTCStorStatusPending)
+			oldrst.CopySpec(rst)
+			oldrst.SetLabel(map[string]string{
+				"cstorpool.openebs.io/uid":     cvr.ObjectMeta.Labels["cstorpool.openebs.io/uid"],
+				"openebs.io/persistent-volume": cvr.ObjectMeta.Labels["openebs.io/persistent-volume"],
+				"openebs.io/restore":           rst.GetRestoreName(),
+			})
+			_, err = rst.UpdateCR(oldrst)
 			if err != nil {
-				glog.Errorf("Failed to re-initialize old existing restore CR(volume:%s CSP:%s) : error '%s'",
-					rst.Spec.VolumeName, cvr.ObjectMeta.Labels["cstorpool.openebs.io/uid"],
+				glog.Errorf("Failed to re-initialize old existing restore CR(volume:%s CSP:%s) : %s",
+					rst.GetVolumeName(), cvr.ObjectMeta.Labels["cstorpool.openebs.io/uid"],
 					err.Error())
 				return nil, CodedError(500, err.Error())
 			}
-			glog.Infof("Re-initializing old restore:%s  %q poolUUID:%v", rst.Name,
-				rst.Spec.VolumeName,
-				rst.ObjectMeta.Labels["cstorpool.openebs.io/uid"])
+			glog.Infof("Re-initializing old restore{%s} for volume{%s} poolUUID{%s}", rst.GetObjName(),
+				rst.GetVolumeName(),
+				rst.GetLabel("cstorpool.openebs.io/uid"))
 		}
 	}
 
@@ -143,115 +139,166 @@ func createRestoreResource(openebsClient *internalclientset.Clientset, rst *v1al
 // get is http handler which handles backup get request
 func (rOps *restoreAPIOps) get() (interface{}, error) {
 	var err error
-	var rstatus v1alpha1.CStorRestoreStatus
+	var rstatus restoreapi.CStorRestoreStatus
 	var resp []byte
 
-	rst := &v1alpha1.CStorRestore{}
+	crst := &restoreapi.CStorRestore{}
 
-	err = decodeBody(rOps.req, rst)
+	err = decodeBody(rOps.req, crst)
 	if err != nil {
 		return nil, err
 	}
 
-	// backup name is expected
-	if len(strings.TrimSpace(rst.Spec.RestoreName)) == 0 {
-		return nil, CodedError(400, fmt.Sprintf("Failed to get restore: missing restore name "))
-	}
+	rst, err := restore.NewCStorRestoreBuilder().
+		WithCheck(restore.IsRestoreNameSet()).
+		WithCheck(restore.IsNamespaceSet()).
+		WithCheck(restore.IsVolumeNameSet()).
+		WithClientSet(nil).
+		BuildFromAPIObject(crst)
 
-	// namespace is expected
-	if len(strings.TrimSpace(rst.Namespace)) == 0 {
-		return nil, CodedError(400, fmt.Sprintf("Failed to get restore '%v': missing namespace", rst.Spec.RestoreName))
-	}
-
-	// volume name is expected
-	if len(strings.TrimSpace(rst.Spec.VolumeName)) == 0 {
-		return nil, CodedError(400, fmt.Sprintf("Failed to get restore '%v': missing volume name", rst.Spec.RestoreName))
+	if err != nil {
+		return nil, CodedError(400, fmt.Sprintf("Failed to parse restore request : %s", err.Error()))
 	}
 
 	rstatus, err = getRestoreStatus(rst)
 	if err != nil {
-		return nil, CodedError(400, fmt.Sprintf("Failed to fetch status '%v'", err))
+		return nil, CodedError(400, fmt.Sprintf("Failed to fetch status : %s", err.Error()))
 	}
 
 	resp, err = json.Marshal(rstatus)
 	if err == nil {
 		_, err = rOps.resp.Write(resp)
 		if err != nil {
-			return nil, CodedError(400, fmt.Sprintf("Failed to send response data"))
+			return nil, CodedError(400, fmt.Sprintf("Failed to write response data : %s", err.Error()))
 		}
 		return nil, nil
 	}
 
-	return nil, CodedError(400, fmt.Sprintf("Failed to encode response data"))
+	return nil, CodedError(400, fmt.Sprintf("Failed to encode response data : %s", err.Error()))
 }
 
-func getRestoreStatus(rst *v1alpha1.CStorRestore) (v1alpha1.CStorRestoreStatus, error) {
-	rstStatus := v1alpha1.RSTCStorStatusEmpty
-
-	openebsClient, k8sClient, err := loadClientFromServiceAccount()
+func getRestoreStatus(rst *restore.CStorRestore) (restoreapi.CStorRestoreStatus, error) {
+	rstStatus := restoreapi.RSTCStorStatusEmpty
+	/*
+		listOptions := v1.ListOptions{
+			LabelSelector: "openebs.io/restore=" + rst.GetRestoreName() + ",openebs.io/persistent-volume=" + rst.GetVolumeName(),
+		}
+	*/
+	//TODO add option for list builder
+	rlist, err := restore.NewCStorRestoreListBuilder().
+		WithNamespace(rst.GetNamespace()).
+		WithClientSet(nil).
+		Build()
 	if err != nil {
-		return rstStatus, CodedError(400, fmt.Sprintf("Failed to create openEBSClient '%v'", err))
+		return restoreapi.RSTCStorStatusEmpty, err
 	}
 
-	listOptions := v1.ListOptions{
-		LabelSelector: "openebs.io/restore=" + rst.Spec.RestoreName + ",openebs.io/persistent-volume=" + rst.Spec.VolumeName,
-	}
-
-	rlist, err := openebsClient.OpenebsV1alpha1().CStorRestores(rst.Namespace).List(listOptions)
-	if err != nil {
-		return v1alpha1.RSTCStorStatusEmpty, CodedError(400, fmt.Sprintf("Failed to fetch restore error:%v", err))
-	}
-
-	for _, nr := range rlist.Items {
-		rstStatus = getCVRRestoreStatus(k8sClient, nr)
+	for _, nr := range rlist.Item {
+		rstStatus = getCVRRestoreStatus(nr)
 
 		switch rstStatus {
-		case v1alpha1.RSTCStorStatusInProgress:
-			rstStatus = v1alpha1.RSTCStorStatusInProgress
-		case v1alpha1.RSTCStorStatusFailed:
-			if nr.Status != rstStatus {
+		case restoreapi.RSTCStorStatusInProgress:
+			rstStatus = restoreapi.RSTCStorStatusInProgress
+		case restoreapi.RSTCStorStatusFailed:
+			if nr.GetStatus() != rstStatus {
 				// Restore for given CVR may failed due to node failure or pool failure
 				// Let's update status for given CVR's restore to failed
-				updateRestoreStatus(openebsClient, nr, rstStatus)
+				// Update Backup status according to last-backup
+				nr.SetStatus(rstStatus)
+				nr.UpdateCR(nr)
 			}
-			rstStatus = v1alpha1.RSTCStorStatusFailed
-		case v1alpha1.RSTCStorStatusDone:
-			if rstStatus != v1alpha1.RSTCStorStatusFailed {
-				rstStatus = v1alpha1.RSTCStorStatusDone
+			rstStatus = restoreapi.RSTCStorStatusFailed
+		case restoreapi.RSTCStorStatusDone:
+			if rstStatus != restoreapi.RSTCStorStatusFailed {
+				rstStatus = restoreapi.RSTCStorStatusDone
 			}
 		}
 
-		glog.Infof("Restore:%v status is %v", nr.Name, nr.Status)
+		glog.Infof("Restore{%v} status is {%s}", nr.GetObjName(), nr.GetStatus())
 
-		if rstStatus == v1alpha1.RSTCStorStatusInProgress {
+		if rstStatus == restoreapi.RSTCStorStatusInProgress {
 			break
 		}
 	}
 	return rstStatus, nil
 }
 
-func getCVRRestoreStatus(k8sClient *kubernetes.Clientset, rst v1alpha1.CStorRestore) v1alpha1.CStorRestoreStatus {
-	if rst.Status != v1alpha1.RSTCStorStatusDone && rst.Status != v1alpha1.RSTCStorStatusFailed {
+func getCVRRestoreStatus(rst *restore.CStorRestore) restoreapi.CStorRestoreStatus {
+	if !rst.IsFailedStatus() && !rst.IsDoneStatus() {
 		// check if node is running or not
-		bkpNodeDown := checkIfCSPPoolNodeDown(k8sClient, rst.Labels["cstorpool.openebs.io/uid"])
+		bkpNodeDown, nodeError := checkIfRSTPoolNodeDown(rst)
 		// check if cstor-pool-mgmt container is running or not
-		bkpPodDown := checkIfCSPPoolPodDown(k8sClient, rst.Labels["cstorpool.openebs.io/uid"])
+		bkpPodDown, podError := checkIfRSTPoolPodDown(rst)
 
+		if nodeError != nil || podError != nil {
+			glog.Errorf("Error occured while checking restore status node:%v pod:%v", nodeError, podError)
+			return restoreapi.RSTCStorStatusInProgress
+		}
 		if bkpNodeDown || bkpPodDown {
 			// Backup is stalled, assume status as failed
-			return v1alpha1.RSTCStorStatusFailed
+			return restoreapi.RSTCStorStatusFailed
 		}
 	}
-	return rst.Status
+	return rst.GetStatus()
 }
 
-// updateRestoreStatus will update the restore status to given status
-func updateRestoreStatus(clientset internalclientset.Interface, rst v1alpha1.CStorRestore, status v1alpha1.CStorRestoreStatus) {
-	rst.Status = status
+// checkIfRSTPoolNodeDown will check if pool node on which
+// given restore is being executed is running or not
+func checkIfRSTPoolNodeDown(rst *restore.CStorRestore) (bool, error) {
+	var nodeDown = true
 
-	_, err := clientset.OpenebsV1alpha1().CStorRestores(rst.Namespace).Update(&rst)
+	k8sclient, err := getK8sClient()
 	if err != nil {
-		glog.Errorf("Failed to update restore:%s with status:%v", rst.Name, status)
-		return
+		return nodeDown, error.Errorf("Failed to fetch clientset : %s", err.Error())
 	}
+
+	pod, err := findPodFromCStorID(k8sclient, rst.GetLabel(PoolUUID))
+	if err != nil {
+		//TODO wrap error
+		return nodeDown, errors.Errorf("Failed to fetch Pod info : %s", err.Error())
+	}
+
+	if pod.Spec.NodeName == "" {
+		//TOTO wrap error
+		return nodeDown, errors.Errorf("NodeName is missing for pod")
+	}
+
+	node, err := k8sclient.CoreV1().Nodes().Get(pod.Spec.NodeName, metav1.GetOptions{})
+	if err != nil {
+		//TODO wrap error
+		return nodeDown, errors.Errorf("Failed to fetch node info for pod{%s}: %s", pod.Name, err.Error())
+	}
+	for _, nodestat := range node.Status.Conditions {
+		if nodestat.Type == corev1.NodeReady && nodestat.Status != corev1.ConditionTrue {
+			//TODO wrap error
+			return nodeDown, nil
+		}
+	}
+	return !nodeDown, nil
+}
+
+// checkIfRSTPoolPodDown will check if pool pod on which
+// given restore is being executed is running or not
+func checkIfRSTPoolPodDown(rst *restore.CStorRestore) (bool, error) {
+	var podDown = true
+
+	k8sclient, err := getK8sClient()
+	if err != nil {
+		//TODO wrap error
+		return podDown, errors.Errorf("Failed to fetch clientset : %s", err.Error())
+	}
+
+	pod, err := findPodFromCStorID(k8sclient, rst.GetLabel(PoolUUID))
+	if err != nil {
+		//TODO wrap error
+		return podDown, errors.Errorf("Failed to fetch Pod info : %s", err.Error())
+	}
+
+	for _, containerstatus := range pod.Status.ContainerStatuses {
+		if containerstatus.Name == CStorPoolMgmtContainer {
+			return !containerstatus.Ready, nil
+		}
+	}
+
+	return podDown, nil
 }

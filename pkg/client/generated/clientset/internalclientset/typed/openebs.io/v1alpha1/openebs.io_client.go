@@ -28,10 +28,7 @@ import (
 type OpenebsV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	CASTemplatesGetter
-	CStorBackupsGetter
-	CStorCompletedBackupsGetter
 	CStorPoolsGetter
-	CStorRestoresGetter
 	CStorVolumesGetter
 	CStorVolumeReplicasGetter
 	DisksGetter
@@ -49,20 +46,8 @@ func (c *OpenebsV1alpha1Client) CASTemplates() CASTemplateInterface {
 	return newCASTemplates(c)
 }
 
-func (c *OpenebsV1alpha1Client) CStorBackups(namespace string) CStorBackupInterface {
-	return newCStorBackups(c, namespace)
-}
-
-func (c *OpenebsV1alpha1Client) CStorCompletedBackups(namespace string) CStorCompletedBackupInterface {
-	return newCStorCompletedBackups(c, namespace)
-}
-
 func (c *OpenebsV1alpha1Client) CStorPools() CStorPoolInterface {
 	return newCStorPools(c)
-}
-
-func (c *OpenebsV1alpha1Client) CStorRestores(namespace string) CStorRestoreInterface {
-	return newCStorRestores(c, namespace)
 }
 
 func (c *OpenebsV1alpha1Client) CStorVolumes(namespace string) CStorVolumeInterface {
