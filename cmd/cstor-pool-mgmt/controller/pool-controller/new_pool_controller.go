@@ -32,6 +32,7 @@ import (
 
 	apis "github.com/openebs/maya/pkg/apis/openebs.io/v1alpha1"
 	clientset "github.com/openebs/maya/pkg/client/generated/clientset/versioned"
+
 	//openebsScheme "github.com/openebs/maya/pkg/client/clientset/versioned/scheme"
 	openebsScheme "github.com/openebs/maya/pkg/client/generated/clientset/versioned/scheme"
 	//informers "github.com/openebs/maya/pkg/client/informers/externalversions"
@@ -72,8 +73,10 @@ func NewCStorPoolController(
 	// obtain references to shared index informers for the cStorPool resources
 	cStorPoolInformer := cStorInformerFactory.Openebs().V1alpha1().CStorPools()
 
-	openebsScheme.AddToScheme(scheme.Scheme)
-
+	err := openebsScheme.AddToScheme(scheme.Scheme)
+	if err != nil {
+		glog.Errorf("failed to add to scheme: error {%v}", err)
+	}
 	// Create event broadcaster to receive events and send them to any EventSink, watcher, or log.
 	// Add NewCstorPoolController types to the default Kubernetes Scheme so Events can be
 	// logged for CstorPool Controller types.
@@ -124,7 +127,7 @@ func NewCStorPoolController(
 				return
 			}
 			if IsOnlyStatusChange(oldCStorPool, newCStorPool) {
-				glog.Infof("Only cStorPool status change: %v, %v ", newCStorPool.ObjectMeta.Name, string(newCStorPool.ObjectMeta.UID))
+				glog.V(4).Infof("Only cStorPool status change: %v, %v ", newCStorPool.ObjectMeta.Name, string(newCStorPool.ObjectMeta.UID))
 				return
 			}
 			if IsDeletionFailedBefore(newCStorPool) || IsErrorDuplicate(newCStorPool) {
@@ -135,8 +138,7 @@ func NewCStorPoolController(
 			if newCStorPool.ResourceVersion == oldCStorPool.ResourceVersion {
 				// Synchronize Cstor pool status
 				q.Operation = common.QOpSync
-				glog.Infof("cStorPool sync event for %s", newCStorPool.ObjectMeta.Name)
-				controller.recorder.Event(newCStorPool, corev1.EventTypeNormal, string(common.SuccessSynced), string(common.StatusSynced))
+				glog.V(4).Infof("cStorPool sync event for %s", newCStorPool.ObjectMeta.Name)
 			} else if IsDestroyEvent(newCStorPool) {
 				q.Operation = common.QOpDestroy
 				glog.Infof("cStorPool Destroy event : %v, %v ", newCStorPool.ObjectMeta.Name, string(newCStorPool.ObjectMeta.UID))

@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	ndm "github.com/openebs/maya/pkg/apis/openebs.io/ndm/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -36,6 +37,8 @@ const (
 	StoragePoolClaimCPK CasPoolKey = "openebs.io/storage-pool-claim"
 	// NdmDiskTypeCPK is the node-disk-manager disk type e.g. 'sparse' or 'disk'
 	NdmDiskTypeCPK CasPoolKey = "ndm.io/disk-type"
+	// NdmBlockDeviceTypeCPK is the node-disk-manager blockdevice type e.g. // 'blockdevice'
+	NdmBlockDeviceTypeCPK CasPoolKey = "ndm.io/blockdevice-type"
 	// PoolTypeMirroredCPV is a key for mirrored for pool
 	PoolTypeMirroredCPV CasPoolValString = "mirrored"
 	// PoolTypeStripedCPV is a key for striped for pool
@@ -48,14 +51,16 @@ const (
 	TypeSparseCPV CasPoolValString = "sparse"
 	// TypeDiskCPV is a key for physical,iscsi,virtual etc disk pool
 	TypeDiskCPV CasPoolValString = "disk"
-	// StripedDiskCountCPV is the count for striped type pool
-	StripedDiskCountCPV CasPoolValInt = 1
-	// MirroredDiskCountCPV is the count for mirrored type pool
-	MirroredDiskCountCPV CasPoolValInt = 2
-	// RaidzDiskCountCPV is the count for raidz type pool
-	RaidzDiskCountCPV CasPoolValInt = 3
-	// Raidz2DiskCountCPV is the count for raidz2 type pool
-	Raidz2DiskCountCPV CasPoolValInt = 6
+	// TypeBlockDeviceCPV is a key for physical,iscsi,virtual etc disk pool
+	TypeBlockDeviceCPV CasPoolValString = "blockdevice"
+	// StripedBlockDeviceCountCPV is the count for striped type pool
+	StripedBlockDeviceCountCPV CasPoolValInt = 1
+	// MirroredBlockDeviceCountCPV is the count for mirrored type pool
+	MirroredBlockDeviceCountCPV CasPoolValInt = 2
+	// RaidzBlockDeviceCountCPV is the count for raidz type pool
+	RaidzBlockDeviceCountCPV CasPoolValInt = 3
+	// Raidz2BlockDeviceCountCPV is the count for raidz2 type pool
+	Raidz2BlockDeviceCountCPV CasPoolValInt = 6
 )
 
 // CasPool is a type which will be utilised by CAS engine to perform
@@ -79,8 +84,8 @@ type CasPool struct {
 	// execution of namespaced resources with respect to storagepool
 	Namespace string
 
-	// DiskList is the list of disks over which a storagepool will be provisioned
-	DiskList []DiskGroup
+	// BlockDeviceList is the list of block devices over which a storagepool will be provisioned
+	BlockDeviceList []BlockDeviceGroup
 
 	// PoolType is the type of pool to be provisioned e.g. striped or mirrored
 	PoolType string
@@ -103,6 +108,6 @@ type CasPool struct {
 	// PendingPoolCount is the number of pools that will be tried for creation as a part of reconciliation.
 	PendingPoolCount int
 
-	DeviceID []string
-	Disks    DiskList
+	DeviceID           []string
+	APIBlockDeviceList ndm.BlockDeviceList
 }

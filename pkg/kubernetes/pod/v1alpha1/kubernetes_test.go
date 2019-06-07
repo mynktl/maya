@@ -111,13 +111,13 @@ func TestWithDefaultOptions(t *testing.T) {
 				t.Fatalf("test %q failed: expected get not to be empty", name)
 			}
 			if mock.kubeClient.list == nil {
-				t.Fatalf("test %q failed: expected get not to be empty", name)
+				t.Fatalf("test %q failed: expected list not to be empty", name)
 			}
 			if mock.kubeClient.del == nil {
-				t.Fatalf("test %q failed: expected get not to be empty", name)
+				t.Fatalf("test %q failed: expected delete not to be empty", name)
 			}
 			if mock.kubeClient.getClientset == nil {
-				t.Fatalf("test %q failed: expected get not to be empty", name)
+				t.Fatalf("test %q failed: expected get clientset not to be empty", name)
 			}
 		})
 	}
@@ -408,7 +408,7 @@ func TestWithBuildOption(t *testing.T) {
 	for name, mock := range tests {
 		name, mock := name, mock
 		t.Run(name, func(t *testing.T) {
-			k := NewKubeClient(WithNamespace(mock.namespace), WithKubeConfigPath(mock.kubeConfigPath))
+			k := NewKubeClient(WithKubeConfigPath(mock.kubeConfigPath)).WithNamespace(mock.namespace)
 			if k.namespace != mock.namespace {
 				t.Fatalf("Test %q failed: expected %v got %v", name, mock.namespace, k.namespace)
 			}

@@ -38,6 +38,8 @@ import (
 	podexec "github.com/openebs/maya/pkg/kubernetes/podexec/v1alpha1"
 	replicaset "github.com/openebs/maya/pkg/kubernetes/replicaset/v1alpha1"
 	service "github.com/openebs/maya/pkg/kubernetes/service/v1alpha1"
+	snapshot "github.com/openebs/maya/pkg/kubernetes/snapshot/v1alpha1"
+	snapshotdata "github.com/openebs/maya/pkg/kubernetes/snapshotdata/v1alpha1"
 	storagepool "github.com/openebs/maya/pkg/storagepool/v1alpha1"
 	"github.com/openebs/maya/pkg/template"
 	templatefuncs "github.com/openebs/maya/pkg/templatefuncs/v1alpha1"
@@ -470,6 +472,8 @@ func (m *executor) ExecuteIt() (err error) {
 		err = m.patchOEV1alpha1CSPC()
 	} else if m.MetaExec.isPutCoreV1Service() {
 		err = m.putCoreV1Service()
+	} else if m.MetaExec.isPatchV1alpha1VolumeSnapshotData() {
+		err = m.patchV1alpha1VolumeSnapshotData()
 	} else if m.MetaExec.isPatchCoreV1Service() {
 		err = m.patchCoreV1Service()
 	} else if m.MetaExec.isDeleteExtnV1B1Deploy() {
@@ -486,8 +490,10 @@ func (m *executor) ExecuteIt() (err error) {
 		err = m.deleteAppsV1B1Deployment()
 	} else if m.MetaExec.isDeleteCoreV1Service() {
 		err = m.deleteCoreV1Service()
-	} else if m.MetaExec.isGetOEV1alpha1Disk() {
-		err = m.getOEV1alpha1Disk()
+	} else if m.MetaExec.isGetOEV1alpha1BlockDevice() {
+		err = m.getOEV1alpha1BlockDevice()
+	} else if m.MetaExec.isGetV1alpha1VolumeSnapshotData() {
+		err = m.getV1alpha1VolumeSnapshotData()
 	} else if m.MetaExec.isGetOEV1alpha1SPC() {
 		err = m.getOEV1alpha1SPC()
 	} else if m.MetaExec.isGetOEV1alpha1CSPC() {
@@ -806,6 +812,36 @@ func (m *executor) patchOEV1alpha1CSPC() (err error) {
 	return
 }
 
+func (m *executor) patchV1alpha1VolumeSnapshotData() (err error) {
+	patch, err := asTaskPatch("patchVolumeSnapshotData", m.Runtask.Spec.Task, m.Values)
+	if err != nil {
+		return errors.Wrap(err, "failed to patch VolumeSnapshotData object")
+	}
+
+	pe, err := newTaskPatchExecutor(patch)
+	if err != nil {
+		return errors.Wrap(err, "failed to patch VolumeSnapshotData object")
+	}
+
+	raw, err := pe.toJson()
+	if err != nil {
+		return errors.Wrap(err, "failed to patch VolumeSnapshotData object")
+	}
+
+	// patch the VolumeSnapshotData
+	vsd, err := snapshotdata.NewKubeClient().Patch(
+		m.getTaskObjectName(),
+		pe.patchType(),
+		raw,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to patch VolumeSnapshotData")
+	}
+
+	util.SetNestedField(m.Values, vsd, string(v1alpha1.CurrentJSONResultTLP))
+	return nil
+}
+
 // patchOEV1alpha1CSV will patch a CStorVolume as defined in the task
 func (m *executor) patchOEV1alpha1CSV() error {
 	patch, err := asTaskPatch("patchCSV", m.Runtask.Spec.Task, m.Values)
@@ -884,7 +920,7 @@ func (m *executor) patchUpgradeResult() error {
 
 	// patch Upgrade Result
 	p, err := upgraderesult.
-		KubeClient().
+		NewKubeClient().
 		WithNamespace(m.getTaskRunNamespace()).
 		Patch(m.getTaskObjectName(), patch.Type, patch.Object)
 	if err != nil {
@@ -1094,6 +1130,19 @@ func (m *executor) listExtnV1B1ReplicaSet(opt metav1.ListOptions) ([]byte, error
 		ListRaw(opt)
 }
 
+func (m *executor) listV1alpha1VolumeSnapshotData(opt metav1.ListOptions) ([]byte, error) {
+	return snapshotdata.
+		NewKubeClient().
+		ListRaw(opt)
+}
+
+func (m *executor) listV1alpha1VolumeSnapshot(opt metav1.ListOptions) ([]byte, error) {
+	return snapshot.
+		NewKubeClient().
+		WithNamespace(m.getTaskRunNamespace()).
+		ListRaw(opt)
+}
+
 // putCoreV1Service will create a Service whose
 // specs are configured in the RunTask
 func (m *executor) putCoreV1Service() error {
@@ -1128,13 +1177,24 @@ func (m *executor) deleteCoreV1Service() error {
 
 // getOEV1alpha1Disk() will get the Disk
 // as specified in the RunTask
-func (m *executor) getOEV1alpha1Disk() error {
-	disk, err := m.getK8sClient().GetOEV1alpha1DiskAsRaw(m.getTaskObjectName())
+func (m *executor) getOEV1alpha1BlockDevice() error {
+	disk, err := m.getK8sClient().GetOEV1alpha1BlockDeviceAsRaw(m.getTaskObjectName())
 	if err != nil {
 		return errors.Wrap(err, "failed to get disk")
 	}
 
 	util.SetNestedField(m.Values, disk, string(v1alpha1.CurrentJSONResultTLP))
+	return nil
+}
+
+func (m *executor) getV1alpha1VolumeSnapshotData() error {
+	//	snapshotData, err := m.getK8sClient().
+	snapshotData, err := snapshotdata.NewKubeClient().GetRaw(m.getTaskObjectName(), metav1.GetOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to get volume snapshot data")
+	}
+
+	util.SetNestedField(m.Values, snapshotData, string(v1alpha1.CurrentJSONResultTLP))
 	return nil
 }
 
@@ -1186,7 +1246,7 @@ func (m *executor) getOEV1alpha1CSP() error {
 // as specified in the RunTask
 func (m *executor) getOEV1alpha1UR() error {
 	uresult, err := upgraderesult.
-		KubeClient().
+		NewKubeClient().
 		WithNamespace(m.getTaskRunNamespace()).
 		Get(m.getTaskObjectName(), metav1.GetOptions{})
 	if err != nil {
@@ -1257,7 +1317,7 @@ func (m *executor) extnV1B1DeploymentRollOutStatus() (err error) {
 
 // appsV1DeploymentRollOutStatus generates rollout status for a given deployment from deployment object
 func (m *executor) appsV1DeploymentRollOutStatus() (err error) {
-	dclient := deploy_appsv1.KubeClient(
+	dclient := deploy_appsv1.NewKubeClient(
 		deploy_appsv1.WithNamespace(m.getTaskRunNamespace()),
 		deploy_appsv1.WithClientset(m.getK8sClient().GetKCS()))
 	res, err := dclient.RolloutStatusf(m.getTaskObjectName())
@@ -1271,7 +1331,7 @@ func (m *executor) appsV1DeploymentRollOutStatus() (err error) {
 
 // getAppsV1Deployment will get the Deployment as specified in the RunTask
 func (m *executor) getAppsV1Deployment() (err error) {
-	dclient := deploy_appsv1.KubeClient(
+	dclient := deploy_appsv1.NewKubeClient(
 		deploy_appsv1.WithNamespace(m.getTaskRunNamespace()),
 		deploy_appsv1.WithClientset(m.getK8sClient().GetKCS()))
 	d, err := dclient.GetRaw(m.getTaskObjectName())
@@ -1316,7 +1376,7 @@ func (m *executor) getBatchV1Job() (err error) {
 
 // getCoreV1Pod will get the Pod as specified in the RunTask
 func (m *executor) getCoreV1Pod() (err error) {
-	podClient := pod.NewKubeClient(pod.WithNamespace(m.getTaskRunNamespace()))
+	podClient := pod.NewKubeClient().WithNamespace(m.getTaskRunNamespace())
 
 	pod, err := podClient.GetRaw(m.getTaskObjectName(), metav1.GetOptions{})
 	if err != nil {
@@ -1439,7 +1499,7 @@ func (m *executor) putUpgradeResult() (err error) {
 		return errors.Wrap(err, "failed to create upgrade result")
 	}
 	uraw, err := upgraderesult.
-		KubeClient().
+		NewKubeClient().
 		WithNamespace(m.getTaskRunNamespace()).
 		CreateRaw(uresult)
 	if err != nil {
@@ -1496,21 +1556,25 @@ func (m *executor) deleteOEV1alpha1CSV() (err error) {
 
 // execCoreV1Pod runs given command remotely in given container of given pod
 // and post stdout and and stderr in JsonResult. You can get it using -
-// {{- jsonpath .JsonResult "{.Stdout}" | trim | saveAs "XXX" .TaskResult | noop -}}
-func (m *executor) execCoreV1Pod() (err error) {
-	podexecopts, err := podexec.WithTemplate("execCoreV1Pod", m.Runtask.Spec.Task, m.Values).
-		AsAPIPodExec()
+// {{- jsonpath .JsonResult "{.stdout}" | trim | saveAs "XXX" .TaskResult | noop -}}
+func (m *executor) execCoreV1Pod() error {
+	raw, err := template.AsTemplatedBytes("execCoreV1Pod", m.Runtask.Spec.Task, m.Values)
+	if err != nil {
+		return errors.Wrap(err, "failed to run templating on pod exec object")
+	}
+	podexecopts, err := podexec.BuilderForYAMLObject(raw).AsAPIPodExec()
+	if err != nil {
+		return errors.Wrap(err, "failed to build pod exec options")
+	}
+	execRaw, err := pod.NewKubeClient().
+		WithNamespace(m.getTaskRunNamespace()).
+		ExecRaw(m.getTaskObjectName(), podexecopts)
 	if err != nil {
 		return errors.Wrap(err, "failed to run pod exec")
 	}
 
-	result, err := m.getK8sClient().ExecCoreV1Pod(m.getTaskObjectName(), podexecopts)
-	if err != nil {
-		return errors.Wrap(err, "failed to run pod exec")
-	}
-
-	util.SetNestedField(m.Values, result, string(v1alpha1.CurrentJSONResultTLP))
-	return
+	util.SetNestedField(m.Values, execRaw, string(v1alpha1.CurrentJSONResultTLP))
+	return nil
 }
 
 // rolloutStatus generates rollout status of a given resource form it's object details
@@ -1547,14 +1611,18 @@ func (m *executor) listK8sResources() (err error) {
 		op, err = kc.ListExtnV1B1DeploymentAsRaw(opts)
 	} else if m.MetaExec.isListExtnV1B1ReplicaSet() {
 		op, err = m.listExtnV1B1ReplicaSet(opts)
+	} else if m.MetaExec.isListV1alpha1VolumeSnapshotData() {
+		op, err = m.listV1alpha1VolumeSnapshotData(opts)
+	} else if m.MetaExec.isListV1alpha1VolumeSnapshot() {
+		op, err = m.listV1alpha1VolumeSnapshot(opts)
 	} else if m.MetaExec.isListAppsV1B1Deploy() {
 		op, err = kc.ListAppsV1B1DeploymentAsRaw(opts)
 	} else if m.MetaExec.isListCoreV1PVC() {
 		op, err = kc.ListCoreV1PVCAsRaw(opts)
 	} else if m.MetaExec.isListCoreV1PV() {
 		op, err = kc.ListCoreV1PVAsRaw(opts)
-	} else if m.MetaExec.isListOEV1alpha1Disk() {
-		op, err = kc.ListOEV1alpha1DiskRaw(opts)
+	} else if m.MetaExec.isListOEV1alpha1BlockDevice() {
+		op, err = kc.ListOEV1alpha1BlockDeviceRaw(opts)
 	} else if m.MetaExec.isListOEV1alpha1SP() {
 		op, err = kc.ListOEV1alpha1SPRaw(opts)
 	} else if m.MetaExec.isListOEV1alpha1CSP() {
@@ -1582,7 +1650,7 @@ func (m *executor) listK8sResources() (err error) {
 // listOEV1alpha1URRaw fetches a list of UpgradeResults as per the
 // provided options
 func (m *executor) listOEV1alpha1URRaw(opts metav1.ListOptions) (result []byte, err error) {
-	urList, err := upgraderesult.KubeClient().
+	urList, err := upgraderesult.NewKubeClient().
 		WithNamespace(m.getTaskRunNamespace()).
 		List(opts)
 	if err != nil {

@@ -37,17 +37,17 @@ type predicateList []Predicate
 type Predicate func(*Pod) bool
 
 // ToAPIList converts PodList to API PodList
-func (p *PodList) ToAPIList() *corev1.PodList {
+func (pl *PodList) ToAPIList() *corev1.PodList {
 	plist := &corev1.PodList{}
-	for _, pod := range p.items {
+	for _, pod := range pl.items {
 		plist.Items = append(plist.Items, *pod.object)
 	}
 	return plist
 }
 
 // Len returns the number of items present in the PodList
-func (p *PodList) Len() int {
-	return len(p.items)
+func (pl *PodList) Len() int {
+	return len(pl.items)
 }
 
 // all returns true if all the predicates
@@ -73,6 +73,20 @@ func (p *Pod) IsRunning() bool {
 func IsRunning() Predicate {
 	return func(p *Pod) bool {
 		return p.IsRunning()
+	}
+}
+
+// IsCompleted retuns true if the pod is in completed
+// state
+func (p *Pod) IsCompleted() bool {
+	return p.object.Status.Phase == "Succeeded"
+}
+
+// IsCompleted is a predicate to filter out pods
+// which in completed state
+func IsCompleted() Predicate {
+	return func(p *Pod) bool {
+		return p.IsCompleted()
 	}
 }
 
@@ -127,4 +141,32 @@ func IsNil() Predicate {
 // GetAPIObject returns a API's Pod
 func (p *Pod) GetAPIObject() *corev1.Pod {
 	return p.object
+}
+
+// FromList created a PodList with provided api podlist
+func FromList(pods *corev1.PodList) *PodList {
+	pl := ListBuilderForAPIList(pods).
+		List()
+	return pl
+}
+
+// GetScheduledNodes returns the nodes on which pods are scheduled
+func (pl *PodList) GetScheduledNodes() map[string]int {
+	nodeNames := make(map[string]int)
+	for _, p := range pl.items {
+		p := p // pin it
+		nodeNames[p.object.Spec.NodeName]++
+	}
+	return nodeNames
+}
+
+// IsMatchNodeAny checks the PodList is running on the provided nodes
+func (pl *PodList) IsMatchNodeAny(nodes map[string]int) bool {
+	for _, p := range pl.items {
+		p := p // pin it
+		if nodes[p.object.Spec.NodeName] == 0 {
+			return false
+		}
+	}
+	return true
 }
