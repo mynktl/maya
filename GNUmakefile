@@ -72,7 +72,7 @@ ifeq (${IMAGE_TAG}, )
 endif
 
 ifeq (${TRAVIS_TAG}, )
-  BASE_TAG = ci
+  BASE_TAG = develop-ci
   export BASE_TAG
 else
   BASE_TAG = ${TRAVIS_TAG}
@@ -146,7 +146,7 @@ cover:
 
 format:
 	@echo "--> Running go fmt"
-	@go fmt $(PACKAGES)
+	@go fmt $(PACKAGES) $(PACKAGES_IT)
 
 # Target to run gometalinter in Travis (deadcode, golint, errcheck, unconvert, goconst)
 golint-travis:

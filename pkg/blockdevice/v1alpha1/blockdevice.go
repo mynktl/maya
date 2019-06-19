@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
+
 	ndm "github.com/openebs/maya/pkg/apis/openebs.io/ndm/v1alpha1"
 	apis "github.com/openebs/maya/pkg/apis/openebs.io/v1alpha1"
 	errors "github.com/openebs/maya/pkg/errors/v1alpha1"
@@ -29,13 +31,16 @@ import (
 //TODO: Update the file with latest pattern
 const (
 	// StorageNodePredicateKey is the key for StorageNodePredicate function.
-	FilterInactive       = "filterInactive"
-	FilterNonInactive    = "filterNonInactive"
-	FilterClaimedDevices = "filterClaimedDevices"
-	InActiveStatus       = "Inactive"
+	FilterInactive    = "filterInactive"
+	FilterNonInactive = "filterNonInactive"
+	//FilterNonPartitions    = "filterNonPartitions"
+	FilterNonFSType        = "filterNonFSType"
+	FilterSparseDevices    = "filterSparseDevices"
+	FilterNonSparseDevices = "filterNonSparseDevices"
+	InActiveStatus         = "Inactive"
 )
 
-// DefaultDiskCount is a map containing the default disk count of various raid types.
+// DefaultDiskCount is a map containing the default block device count of various raid types.
 var DefaultDiskCount = map[string]int{
 	string(apis.PoolTypeMirroredCPV): int(apis.MirroredBlockDeviceCountCPV),
 	string(apis.PoolTypeStripedCPV):  int(apis.StripedBlockDeviceCountCPV),
@@ -105,9 +110,12 @@ var checkPredicatesFuncs = [...]predicate{
 // filterPredicatesFuncMap is an array of filter predicate functions
 // filter predicates should be tunable by client.
 var filterOptionFuncMap = map[string]filterOptionFunc{
-	FilterInactive:       filterInactive,
-	FilterNonInactive:    filterNonInactive,
-	FilterClaimedDevices: filterClaimedDevices,
+	FilterInactive:    filterInactive,
+	FilterNonInactive: filterNonInactive,
+	//FilterNonPartitions:    filterNonPartitions,
+	FilterNonFSType:        filterNonFSType,
+	FilterSparseDevices:    filterSparseDevices,
+	FilterNonSparseDevices: filterNonSparseDevices,
 }
 
 // predicateFailedError returns the predicate error which is provided to this function as an argument
@@ -202,12 +210,12 @@ func (bdl *BlockDeviceList) Filter(predicateKeys ...string) *BlockDeviceList {
 }
 
 //filterInactive filter and give out all the inactive block device
-func filterInactive(orignialList *BlockDeviceList) *BlockDeviceList {
+func filterInactive(originalList *BlockDeviceList) *BlockDeviceList {
 	filteredList := &BlockDeviceList{
 		BlockDeviceList: &ndm.BlockDeviceList{},
 		errs:            nil,
 	}
-	for _, device := range orignialList.Items {
+	for _, device := range originalList.Items {
 		if device.Status.State == InActiveStatus {
 			filteredList.Items = append(filteredList.Items, device)
 		}
@@ -229,13 +237,52 @@ func filterNonInactive(orignialList *BlockDeviceList) *BlockDeviceList {
 	return filteredList
 }
 
-func filterClaimedDevices(orignialList *BlockDeviceList) *BlockDeviceList {
+func filterNonPartitions(originalList *BlockDeviceList) *BlockDeviceList {
 	filteredList := &BlockDeviceList{
 		BlockDeviceList: &ndm.BlockDeviceList{},
 		errs:            nil,
 	}
-	for _, device := range orignialList.Items {
-		if device.Status.ClaimState == ndm.BlockDeviceClaimed {
+	for _, device := range originalList.Items {
+		if strings.EqualFold(device.Spec.Partitioned, "No") {
+			filteredList.Items = append(filteredList.Items, device)
+		}
+	}
+	return filteredList
+}
+
+func filterNonFSType(originalList *BlockDeviceList) *BlockDeviceList {
+	filteredList := &BlockDeviceList{
+		BlockDeviceList: &ndm.BlockDeviceList{},
+		errs:            nil,
+	}
+	for _, device := range originalList.Items {
+		if device.Spec.FileSystem.Type == "" {
+			filteredList.Items = append(filteredList.Items, device)
+		}
+	}
+	return filteredList
+}
+
+func filterSparseDevices(originalList *BlockDeviceList) *BlockDeviceList {
+	filteredList := &BlockDeviceList{
+		BlockDeviceList: &ndm.BlockDeviceList{},
+		errs:            nil,
+	}
+	for _, device := range originalList.Items {
+		if device.Spec.Details.DeviceType == string(apis.TypeSparseCPV) {
+			filteredList.Items = append(filteredList.Items, device)
+		}
+	}
+	return filteredList
+}
+
+func filterNonSparseDevices(originalList *BlockDeviceList) *BlockDeviceList {
+	filteredList := &BlockDeviceList{
+		BlockDeviceList: &ndm.BlockDeviceList{},
+		errs:            nil,
+	}
+	for _, device := range originalList.Items {
+		if !(device.Spec.Details.DeviceType == string(apis.TypeSparseCPV)) {
 			filteredList.Items = append(filteredList.Items, device)
 		}
 	}
@@ -248,4 +295,49 @@ func (bdl *BlockDeviceList) Hasitems() (string, bool) {
 		return "No item found in blockdevice list", false
 	}
 	return "", true
+}
+
+// IsClaimed returns true if block device is claimed
+func (bd *BlockDevice) IsClaimed() bool {
+	return bd.Status.ClaimState == ndm.BlockDeviceClaimed
+}
+
+// GetDeviceID returns the device link of the block device.
+// If device link is not found it returns device path.
+// For a cstor pool creation -- this link or path is used.
+// For convenience, we call it as device ID.
+// Hence, device ID can either be a  device link or device path
+// depending on what was available in block device cr.
+func (bd *BlockDevice) GetDeviceID() string {
+	deviceID := bd.GetLink()
+	if deviceID != "" {
+		return deviceID
+	}
+	return bd.GetPath()
+}
+
+// GetLink returns the link of the block device
+// if present else return empty string
+func (bd *BlockDevice) GetLink() string {
+	if len(bd.Spec.DevLinks) != 0 &&
+		len(bd.Spec.DevLinks[0].Links) != 0 {
+		return bd.Spec.DevLinks[0].Links[0]
+	}
+	return ""
+}
+
+// GetPath returns path of the block device
+func (bd *BlockDevice) GetPath() string {
+	return bd.Spec.Path
+}
+
+// GetBlockDevice returns the block device object present in the block device list
+func (bdl *BlockDeviceList) GetBlockDevice(bdcName string) *ndm.BlockDevice {
+	for _, bdcObj := range bdl.Items {
+		bdcObj := bdcObj
+		if bdcObj.Name == bdcName {
+			return &bdcObj
+		}
+	}
+	return nil
 }

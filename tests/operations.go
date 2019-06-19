@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	apis "github.com/openebs/maya/pkg/apis/openebs.io/v1alpha1"
+	bd "github.com/openebs/maya/pkg/blockdevice/v1alpha2"
 	csp "github.com/openebs/maya/pkg/cstorpool/v1alpha3"
 	cv "github.com/openebs/maya/pkg/cstorvolume/v1alpha1"
 	cvr "github.com/openebs/maya/pkg/cstorvolumereplica/v1alpha1"
@@ -31,6 +32,7 @@ import (
 	kubeclient "github.com/openebs/maya/pkg/kubernetes/client/v1alpha1"
 	deploy "github.com/openebs/maya/pkg/kubernetes/deployment/appsv1/v1alpha1"
 	ns "github.com/openebs/maya/pkg/kubernetes/namespace/v1alpha1"
+	node "github.com/openebs/maya/pkg/kubernetes/node/v1alpha1"
 	pvc "github.com/openebs/maya/pkg/kubernetes/persistentvolumeclaim/v1alpha1"
 	pod "github.com/openebs/maya/pkg/kubernetes/pod/v1alpha1"
 	svc "github.com/openebs/maya/pkg/kubernetes/service/v1alpha1"
@@ -63,6 +65,7 @@ type Options struct {
 // Operations provides clients amd methods to perform operations
 type Operations struct {
 	KubeClient     *kubeclient.Client
+	NodeClient     *node.Kubeclient
 	PodClient      *pod.KubeClient
 	SCClient       *sc.Kubeclient
 	PVCClient      *pvc.Kubeclient
@@ -76,6 +79,7 @@ type Operations struct {
 	URClient       *result.Kubeclient
 	UnstructClient *unstruct.Kubeclient
 	DeployClient   *deploy.Kubeclient
+	BDClient       *bd.Kubeclient
 	kubeConfigPath string
 }
 
@@ -175,6 +179,12 @@ func (ops *Operations) withDefaults() {
 	if ops.DeployClient == nil {
 		ops.DeployClient = deploy.NewKubeClient(deploy.WithKubeConfigPath(ops.kubeConfigPath))
 	}
+	if ops.BDClient == nil {
+		ops.BDClient = bd.NewKubeClient(bd.WithKubeConfigPath(ops.kubeConfigPath))
+	}
+	if ops.NodeClient == nil {
+		ops.NodeClient = node.NewKubeClient(node.WithKubeConfigPath(ops.kubeConfigPath))
+	}
 }
 
 // VerifyOpenebs verify running state of required openebs control plane components
@@ -240,7 +250,7 @@ func (ops *Operations) GetCstorVolumeCountEventually(namespace, lselector string
 		cvCount := ops.GetCVCount(namespace, lselector)
 		return cvCount
 	},
-		60, 10).Should(Equal(expectedCVCount))
+		120, 10).Should(Equal(expectedCVCount))
 }
 
 // GetCstorVolumeReplicaCountEventually gives the count of cstorvolume based on
@@ -250,7 +260,7 @@ func (ops *Operations) GetCstorVolumeReplicaCountEventually(namespace, lselector
 		cvCount := ops.GetCstorVolumeReplicaCount(namespace, lselector)
 		return cvCount
 	},
-		60, 10).Should(Equal(expectedCVRCount))
+		120, 10).Should(Equal(expectedCVRCount))
 }
 
 // GetPodRunningCount gives number of pods running currently
@@ -292,6 +302,19 @@ func (ops *Operations) GetCstorVolumeReplicaCount(namespace, lselector string) i
 		Len()
 }
 
+// GetReadyNodes gives cstorvolumereplica healthy count currently based on selecter
+func (ops *Operations) GetReadyNodes() *corev1.NodeList {
+	nodes, err := ops.NodeClient.
+		List(metav1.ListOptions{})
+	Expect(err).ShouldNot(HaveOccurred())
+	return node.
+		NewListBuilder().
+		WithAPIList(nodes).
+		WithFilter(node.IsReady()).
+		List().
+		ToAPIList()
+}
+
 // IsPVCBound checks if the pvc is bound or not
 func (ops *Operations) IsPVCBound(pvcName string) bool {
 	volume, err := ops.PVCClient.
@@ -308,7 +331,31 @@ func (ops *Operations) IsPVCBoundEventually(pvcName string) bool {
 		Expect(err).ShouldNot(HaveOccurred())
 		return pvc.NewForAPIObject(volume).IsBound()
 	},
-		60, 10).
+		120, 10).
+		Should(BeTrue())
+}
+
+// PodDeleteCollection deletes all the pods in a namespace matched the given
+// labelselector
+func (ops *Operations) PodDeleteCollection(ns string, lopts metav1.ListOptions) error {
+	deletePolicy := metav1.DeletePropagationForeground
+	dopts := &metav1.DeleteOptions{
+		PropagationPolicy: &deletePolicy,
+	}
+	return ops.PodClient.WithNamespace(ns).DeleteCollection(lopts, dopts)
+}
+
+// IsPodRunningEventually checks if the pvc is bound or not eventually
+func (ops *Operations) IsPodRunningEventually(namespace, podName string) bool {
+	return Eventually(func() bool {
+		p, err := ops.PodClient.
+			WithNamespace(namespace).
+			Get(podName, metav1.GetOptions{})
+		Expect(err).ShouldNot(HaveOccurred())
+		return pod.NewForAPIObject(p).
+			IsRunning()
+	},
+		150, 10).
 		Should(BeTrue())
 }
 
@@ -369,7 +416,7 @@ func (ops *Operations) IsPodDeletedEventually(namespace, podName string) bool {
 			Get(podName, metav1.GetOptions{})
 		return isNotFound(err)
 	},
-		60, 10).
+		120, 10).
 		Should(BeTrue())
 }
 
@@ -421,6 +468,10 @@ func (ops *Operations) GetCSPCount(spcName string, expectedCSPCount int) int {
 		cspCount = csp.
 			ListBuilderForAPIObject(cspAPIList).
 			List().
+			Filter(
+				csp.HasLabel(string(apis.StoragePoolClaimCPK), spcName),
+				csp.IsStatus("Healthy"),
+			).
 			Len()
 		if cspCount == expectedCSPCount {
 			return cspCount
@@ -461,7 +512,7 @@ func (ops *Operations) GetHealthyCSPCountEventually(spcName string, expectedCSPC
 			Len()
 		return count
 	},
-		60, 10).
+		120, 10).
 		Should(Equal(expectedCSPCount))
 }
 
