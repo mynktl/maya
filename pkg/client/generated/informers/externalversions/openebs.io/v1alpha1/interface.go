@@ -38,8 +38,12 @@ type Interface interface {
 	CStorRestores() CStorRestoreInformer
 	// CStorVolumes returns a CStorVolumeInformer.
 	CStorVolumes() CStorVolumeInformer
+	// CStorVolumeClaims returns a CStorVolumeClaimInformer.
+	CStorVolumeClaims() CStorVolumeClaimInformer
 	// CStorVolumeReplicas returns a CStorVolumeReplicaInformer.
 	CStorVolumeReplicas() CStorVolumeReplicaInformer
+	// NewTestCStorPools returns a NewTestCStorPoolInformer.
+	NewTestCStorPools() NewTestCStorPoolInformer
 	// RunTasks returns a RunTaskInformer.
 	RunTasks() RunTaskInformer
 	// StoragePools returns a StoragePoolInformer.
@@ -94,9 +98,19 @@ func (v *version) CStorVolumes() CStorVolumeInformer {
 	return &cStorVolumeInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
+// CStorVolumeClaims returns a CStorVolumeClaimInformer.
+func (v *version) CStorVolumeClaims() CStorVolumeClaimInformer {
+	return &cStorVolumeClaimInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
 // CStorVolumeReplicas returns a CStorVolumeReplicaInformer.
 func (v *version) CStorVolumeReplicas() CStorVolumeReplicaInformer {
 	return &cStorVolumeReplicaInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// NewTestCStorPools returns a NewTestCStorPoolInformer.
+func (v *version) NewTestCStorPools() NewTestCStorPoolInformer {
+	return &newTestCStorPoolInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // RunTasks returns a RunTaskInformer.

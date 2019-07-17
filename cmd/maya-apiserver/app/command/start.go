@@ -22,15 +22,18 @@ import (
 	"os/signal"
 	"reflect"
 	"sort"
+	"sync"
 
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/golang/glog"
+	cvc "github.com/openebs/maya/cmd/cstorvolumeclaim"
 	"github.com/openebs/maya/cmd/maya-apiserver/app/config"
 	"github.com/openebs/maya/cmd/maya-apiserver/app/server"
-	spc "github.com/openebs/maya/cmd/maya-apiserver/cstor-operator/spc"
+	"github.com/openebs/maya/cmd/maya-apiserver/cstor-operator/cspc"
+	"github.com/openebs/maya/cmd/maya-apiserver/cstor-operator/spc"
 	env "github.com/openebs/maya/pkg/env/v1alpha1"
 	errors "github.com/openebs/maya/pkg/errors/v1alpha1"
 	install "github.com/openebs/maya/pkg/install/v1alpha1"
@@ -124,6 +127,7 @@ func NewCmdStart() *cobra.Command {
 func Run(cmd *cobra.Command, c *CmdStartOptions) error {
 	glog.Infof("Initializing maya-apiserver...")
 
+	var ControllerMutex = sync.RWMutex{}
 	// Read and merge with default configuration
 	mconfig := c.readMayaConfig()
 	if mconfig == nil {
@@ -175,16 +179,25 @@ func Run(cmd *cobra.Command, c *CmdStartOptions) error {
 
 	// start storage pool controller
 	go func() {
-		err := spc.Start()
+		err := spc.Start(&ControllerMutex)
 		if err != nil {
 			glog.Errorf("Failed to start storage pool controller: %s", err.Error())
 		}
+
 	}()
 
-	// start webhook controller
-	//go func() {
-	//	webhook.Start()
-	//}()
+	go func() {
+		err := cspc.Start(&ControllerMutex)
+		if err != nil {
+			glog.Errorf("Failed to start CStorPoolCluster controller: %s", err.Error())
+		}
+	}()
+	go func() {
+		err := cvc.Start(&ControllerMutex)
+		if err != nil {
+			glog.Errorf("Failed to start cstorvolume claim controller: %s", err.Error())
+		}
+	}()
 
 	if env.Truthy(env.OpenEBSEnableAnalytics) {
 		usage.New().Build().InstallBuilder(true).Send()

@@ -56,8 +56,16 @@ func (c *FakeOpenebsV1alpha1) CStorVolumes(namespace string) v1alpha1.CStorVolum
 	return &FakeCStorVolumes{c, namespace}
 }
 
+func (c *FakeOpenebsV1alpha1) CStorVolumeClaims(namespace string) v1alpha1.CStorVolumeClaimInterface {
+	return &FakeCStorVolumeClaims{c, namespace}
+}
+
 func (c *FakeOpenebsV1alpha1) CStorVolumeReplicas(namespace string) v1alpha1.CStorVolumeReplicaInterface {
 	return &FakeCStorVolumeReplicas{c, namespace}
+}
+
+func (c *FakeOpenebsV1alpha1) NewTestCStorPools(namespace string) v1alpha1.NewTestCStorPoolInterface {
+	return &FakeNewTestCStorPools{c, namespace}
 }
 
 func (c *FakeOpenebsV1alpha1) RunTasks(namespace string) v1alpha1.RunTaskInterface {

@@ -1,12 +1,9 @@
 /*
 Copyright 2019 The OpenEBS Authors
-
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
     http://www.apache.org/licenses/LICENSE-2.0
-
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,10 +16,8 @@ package v1alpha1
 import (
 	stringer "github.com/openebs/maya/pkg/apis/stringer/v1alpha1"
 	errors "github.com/openebs/maya/pkg/errors/v1alpha1"
-	container "github.com/openebs/maya/pkg/kubernetes/container/v1alpha1"
-	volume "github.com/openebs/maya/pkg/kubernetes/volume/v1alpha1"
+	templatespec "github.com/openebs/maya/pkg/kubernetes/podtemplatespec/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -40,7 +35,7 @@ type Predicate func(*Deploy) bool
 // Deploy is the wrapper over k8s deployment Object
 type Deploy struct {
 	// kubernetes deployment instance
-	Object *appsv1.Deployment
+	object *appsv1.Deployment
 }
 
 // Builder enables building an instance of
@@ -56,7 +51,8 @@ type Builder struct {
 type PredicateName string
 
 const (
-	// PredicateProgressDeadlineExceeded refer to predicate IsProgressDeadlineExceeded.
+	// PredicateProgressDeadlineExceeded refer to
+	// predicate IsProgressDeadlineExceeded.
 	PredicateProgressDeadlineExceeded PredicateName = "ProgressDeadlineExceeded"
 	// PredicateNotSpecSynced refer to predicate IsNotSpecSynced
 	PredicateNotSpecSynced PredicateName = "NotSpecSynced"
@@ -70,7 +66,7 @@ const (
 
 // String implements the stringer interface
 func (d *Deploy) String() string {
-	return stringer.Yaml("deployment", d.Object)
+	return stringer.Yaml("deployment", d.object)
 }
 
 // GoString implements the goStringer interface
@@ -82,7 +78,7 @@ func (d *Deploy) GoString() string {
 func NewBuilder() *Builder {
 	return &Builder{
 		deployment: &Deploy{
-			Object: &appsv1.Deployment{},
+			object: &appsv1.Deployment{},
 		},
 	}
 }
@@ -90,110 +86,316 @@ func NewBuilder() *Builder {
 // WithName sets the Name field of deployment with provided value.
 func (b *Builder) WithName(name string) *Builder {
 	if len(name) == 0 {
-		b.errors = append(b.errors, errors.New("failed to build deployment: missing deployment name"))
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment: missing name"),
+		)
 		return b
 	}
-	b.deployment.Object.Name = name
+	b.deployment.object.Name = name
 	return b
 }
 
 // WithNamespace sets the Namespace field of deployment with provided value.
 func (b *Builder) WithNamespace(namespace string) *Builder {
 	if len(namespace) == 0 {
-		b.errors = append(b.errors, errors.New("failed to build deployment: missing namespace"))
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment: missing namespace"),
+		)
 		return b
 	}
-	b.deployment.Object.Namespace = namespace
+	b.deployment.object.Namespace = namespace
 	return b
 }
 
-// WithContainer sets the container field of the deployment object with the given container object
-func (b *Builder) WithContainer(container *corev1.Container) *Builder {
-	b.deployment.Object.Spec.Template.Spec.Containers = append(b.deployment.Object.Spec.Template.Spec.Containers, *container)
-	return b
-}
-
-// WithContainerBuilder builds the containerbuilder provided and
-// sets the container field of the deployment object with the given container object
-func (b *Builder) WithContainerBuilder(containerBuilder *container.Builder) *Builder {
-	containerObj, err := containerBuilder.Build()
-	if err != nil {
-		b.errors = append(b.errors, errors.Wrap(err, "failed to build deployment"))
+// WithAnnotations merges existing annotations if any
+// with the ones that are provided here
+func (b *Builder) WithAnnotations(annotations map[string]string) *Builder {
+	if len(annotations) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: missing annotations"),
+		)
 		return b
 	}
-	b.deployment.Object.Spec.Template.Spec.Containers = append(
-		b.deployment.Object.Spec.Template.Spec.Containers,
-		containerObj,
-	)
+
+	if b.deployment.object.Annotations == nil {
+		return b.WithAnnotationsNew(annotations)
+	}
+
+	for key, value := range annotations {
+		b.deployment.object.Annotations[key] = value
+	}
 	return b
 }
 
-// WithVolumes sets Volumes field of deployment.
-func (b *Builder) WithVolumes(vol []corev1.Volume) *Builder {
-	b.deployment.Object.Spec.Template.Spec.Volumes = vol
-	return b
-}
-
-// WithVolumeBuilder sets Volumes field of deployment.
-func (b *Builder) WithVolumeBuilder(volumeBuilder *volume.Builder) *Builder {
-	vol, err := volumeBuilder.Build()
-	if err != nil {
-		b.errors = append(b.errors, errors.Wrap(err, "failed to build deployment"))
+// WithAnnotationsNew resets existing annotaions if any with
+// ones that are provided here
+func (b *Builder) WithAnnotationsNew(annotations map[string]string) *Builder {
+	if len(annotations) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: no new annotations"),
+		)
 		return b
 	}
-	b.deployment.Object.Spec.Template.Spec.Volumes = append(
-		b.deployment.Object.Spec.Template.Spec.Volumes,
-		*vol,
-	)
+
+	// copy of original map
+	newannotations := map[string]string{}
+	for key, value := range annotations {
+		newannotations[key] = value
+	}
+
+	// override
+	b.deployment.object.Annotations = newannotations
 	return b
 }
 
-// WithLabels sets the label field of deployment
+// WithNodeSelector Sets the node selector with the provided argument.
+func (b *Builder) WithNodeSelector(selector map[string]string) *Builder {
+	if len(selector) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: no node selector"),
+		)
+		return b
+	}
+	if b.deployment.object.Spec.Template.Spec.NodeSelector == nil {
+		return b.WithNodeSelectorNew(selector)
+	}
+
+	for key, value := range selector {
+		b.deployment.object.Spec.Template.Spec.NodeSelector[key] = value
+	}
+	return b
+}
+
+// WithNodeSelector Sets the node selector with the provided argument.
+func (b *Builder) WithNodeSelectorNew(selector map[string]string) *Builder {
+	if len(selector) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: no new node selector"),
+		)
+		return b
+	}
+
+	b.deployment.object.Spec.Template.Spec.NodeSelector = selector
+	return b
+}
+
+// WithOwnerReferenceNew sets ownerreference if any with
+// ones that are provided here
+func (b *Builder) WithOwnerReferenceNew(ownerRefernce []metav1.OwnerReference) *Builder {
+	if len(ownerRefernce) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: no new ownerRefernce"),
+		)
+		return b
+	}
+
+	b.deployment.object.OwnerReferences = ownerRefernce
+	return b
+}
+
+// WithLabels merges existing labels if any
+// with the ones that are provided here
 func (b *Builder) WithLabels(labels map[string]string) *Builder {
-	b.deployment.Object.Labels = labels
-	return b
-}
-
-// WithLabelSelector sets label selector for template and deployment
-func (b *Builder) WithLabelSelector(labels map[string]string) *Builder {
 	if len(labels) == 0 {
-		b.errors = append(b.errors, errors.New("failed to build deployment: missing labels"))
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: missing labels"),
+		)
 		return b
 	}
-	labelselector := metav1.LabelSelector{}
-	labelselector.MatchLabels = labels
-	b.deployment.Object.Spec.Selector = &labelselector
-	b.deployment.Object.Spec.Template.Labels = labels
+
+	if b.deployment.object.Labels == nil {
+		return b.WithLabelsNew(labels)
+	}
+
+	for key, value := range labels {
+		b.deployment.object.Labels[key] = value
+	}
 	return b
 }
 
-// NewBuilderForAPIObject returns a new instance of builder
-// for a given deployment Object
-func NewBuilderForAPIObject(deployment *appsv1.Deployment) *Builder {
-	b := NewBuilder()
-	if deployment != nil {
-		b.deployment.Object = deployment
-	} else {
-		b.errors = append(b.errors,
-			errors.New("nil deployment given to get builder instance"))
+// WithLabelsNew resets existing labels if any with
+// ones that are provided here
+func (b *Builder) WithLabelsNew(labels map[string]string) *Builder {
+	if len(labels) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: no new labels"),
+		)
+		return b
+	}
+
+	// copy of original map
+	newlbls := map[string]string{}
+	for key, value := range labels {
+		newlbls[key] = value
+	}
+
+	// override
+	b.deployment.object.Labels = newlbls
+	return b
+}
+
+// WithSelectorMatchLabels merges existing matchlabels if any
+// with the ones that are provided here
+func (b *Builder) WithSelectorMatchLabels(matchlabels map[string]string) *Builder {
+	if len(matchlabels) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: missing matchlabels"),
+		)
+		return b
+	}
+
+	if b.deployment.object.Spec.Selector == nil {
+		return b.WithSelectorMatchLabelsNew(matchlabels)
+	}
+
+	for key, value := range matchlabels {
+		b.deployment.object.Spec.Selector.MatchLabels[key] = value
 	}
 	return b
+}
+
+// WithSelectorMatchLabelsNew resets existing matchlabels if any with
+// ones that are provided here
+func (b *Builder) WithSelectorMatchLabelsNew(matchlabels map[string]string) *Builder {
+	if len(matchlabels) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: no new matchlabels"),
+		)
+		return b
+	}
+
+	// copy of original map
+	newmatchlabels := map[string]string{}
+	for key, value := range matchlabels {
+		newmatchlabels[key] = value
+	}
+
+	newselector := &metav1.LabelSelector{
+		MatchLabels: newmatchlabels,
+	}
+
+	// override
+	b.deployment.object.Spec.Selector = newselector
+	return b
+}
+
+// WithReplicas sets the replica field of deployment
+func (b *Builder) WithReplicas(replicas *int32) *Builder {
+
+	if replicas == nil {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: nil replicas"),
+		)
+		return b
+	}
+
+	newreplicas := *replicas
+
+	if newreplicas < 0 {
+		b.errors = append(
+			b.errors,
+			errors.Errorf(
+				"failed to build deployment object: invalid replicas {%d}",
+				newreplicas,
+			),
+		)
+		return b
+	}
+
+	b.deployment.object.Spec.Replicas = &newreplicas
+	return b
+}
+
+//WithStrategyType sets the strategy field of the deployment
+func (b *Builder) WithStrategyType(
+	strategytype appsv1.DeploymentStrategyType,
+) *Builder {
+	if len(strategytype) == 0 {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment object: missing strategytype"),
+		)
+		return b
+	}
+
+	b.deployment.object.Spec.Strategy.Type = strategytype
+	return b
+}
+
+// WithPodTemplateSpecBuilder sets the template field of the deployment
+func (b *Builder) WithPodTemplateSpecBuilder(
+	tmplbuilder *templatespec.Builder,
+) *Builder {
+	if tmplbuilder == nil {
+		b.errors = append(
+			b.errors,
+			errors.New("failed to build deployment: nil templatespecbuilder"),
+		)
+		return b
+	}
+
+	templatespecObj, err := tmplbuilder.Build()
+
+	if err != nil {
+		b.errors = append(
+			b.errors,
+			errors.Wrap(
+				err,
+				"failed to build deployment",
+			),
+		)
+		return b
+	}
+
+	b.deployment.object.Spec.Template = *templatespecObj.Object
+	return b
+}
+
+type deployBuildOption func(*Deploy)
+
+// NewForAPIObject returns a new instance of builder
+// for a given deployment Object
+func NewForAPIObject(
+	obj *appsv1.Deployment,
+	opts ...deployBuildOption,
+) *Deploy {
+	d := &Deploy{object: obj}
+	for _, o := range opts {
+		o(d)
+	}
+	return d
 }
 
 // Build returns a deployment instance
-func (b *Builder) Build() (*Deploy, error) {
+func (b *Builder) Build() (*appsv1.Deployment, error) {
 	err := b.validate()
+	// TODO: err in Wrapf is not logged. Fix is required
 	if err != nil {
 		return nil, errors.Wrapf(err,
 			"failed to build a deployment: %s",
-			b.deployment.Object)
+			b.deployment.object.Name)
 	}
-	return b.deployment, nil
+	return b.deployment.object, nil
 }
 
 func (b *Builder) validate() error {
 	if len(b.errors) != 0 {
-		return errors.Errorf("failed to validate: build errors were found: %v", b.errors)
+		return errors.Errorf(
+			"failed to validate: build errors were found: %+v",
+			b.errors,
+		)
 	}
 	return nil
 }
@@ -275,7 +477,7 @@ func IsProgressDeadlineExceeded() Predicate {
 // If `Progressing` condition's reason is `ProgressDeadlineExceeded` then
 // it is not rolled out.
 func (d *Deploy) IsProgressDeadlineExceeded() bool {
-	for _, cond := range d.Object.Status.Conditions {
+	for _, cond := range d.object.Status.Conditions {
 		if cond.Type == appsv1.DeploymentProgressing &&
 			cond.Reason == "ProgressDeadlineExceeded" {
 			return true
@@ -297,8 +499,8 @@ func IsOlderReplicaActive() Predicate {
 // Status.UpdatedReplicas < *Spec.Replicas then some of the replicas are
 // updated and some of them are not.
 func (d *Deploy) IsOlderReplicaActive() bool {
-	return d.Object.Spec.Replicas != nil &&
-		d.Object.Status.UpdatedReplicas < *d.Object.Spec.Replicas
+	return d.object.Spec.Replicas != nil &&
+		d.object.Status.UpdatedReplicas < *d.object.Spec.Replicas
 }
 
 // IsTerminationInProgress checks for older replicas are waiting to
@@ -318,7 +520,7 @@ func IsTerminationInProgress() Predicate {
 // replicas are not in running state. It waits for newer replica to
 // come into running state then terminate.
 func (d *Deploy) IsTerminationInProgress() bool {
-	return d.Object.Status.Replicas > d.Object.Status.UpdatedReplicas
+	return d.object.Status.Replicas > d.object.Status.UpdatedReplicas
 }
 
 // IsUpdateInProgress Checks if all the replicas are updated or not.
@@ -334,7 +536,7 @@ func IsUpdateInProgress() Predicate {
 // If Status.AvailableReplicas < Status.UpdatedReplicas then all the
 // older replicas are not there but there are less number of availableReplicas
 func (d *Deploy) IsUpdateInProgress() bool {
-	return d.Object.Status.AvailableReplicas < d.Object.Status.UpdatedReplicas
+	return d.object.Status.AvailableReplicas < d.object.Status.UpdatedReplicas
 }
 
 // IsNotSyncSpec compare generation in status and spec and check if
@@ -350,5 +552,5 @@ func IsNotSyncSpec() Predicate {
 // deployment spec is synced or not. If Generation <= Status.ObservedGeneration
 // then deployment spec is not updated yet.
 func (d *Deploy) IsNotSyncSpec() bool {
-	return d.Object.Generation > d.Object.Status.ObservedGeneration
+	return d.object.Generation > d.object.Status.ObservedGeneration
 }
