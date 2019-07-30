@@ -49,6 +49,12 @@ type CStorBackupSpec struct {
 
 	// BackupDest is the remote address for backup transfer
 	BackupDest string `json:"backupDest"`
+
+	// AsyncBackup is to check if backup is async or not
+	AsyncBackup bool `json:"async"`
+
+	// CloudCred is a map of cloud provider configuration
+	CloudCred map[CloudKey]string `json:"cloudCred"`
 }
 
 // CStorBackupStatus is to hold status of backup
@@ -88,3 +94,41 @@ type CStorBackupList struct {
 
 	Items []CStorBackup `json:"items"`
 }
+
+// CloudKey defines cloud config key
+type CloudKey string
+
+const (
+	// CloudProvider cloud provider
+	CloudProvider CloudKey = "provider"
+
+	// CloudBucket  bucket name
+	CloudBucket CloudKey = "bucket"
+
+	// CloudPrefix prefix for file name
+	CloudPrefix CloudKey = "prefix"
+
+	// CloudBackupPathPrefix prefix for backup path
+	CloudBackupPathPrefix CloudKey = "backupPathPrefix"
+
+	// CloudRegion region for cloud provider
+	CloudRegion CloudKey = "region"
+
+	// CloudAWSUrl  url for aws bucket
+	CloudAWSUrl CloudKey = "s3Url"
+
+	// CloudAWSForcePath s3ForcePathStyle config
+	CloudAWSForcePath CloudKey = "s3ForcePathStyle"
+
+	// CloudAWSSsl DisableSSL
+	CloudAWSSsl CloudKey = "DisableSSL"
+)
+
+// supported cloud providers
+const (
+	// AWS aws cloud provider
+	AWS = "aws"
+
+	// GCP gcp cloud provider
+	GCP = "gcp"
+)
