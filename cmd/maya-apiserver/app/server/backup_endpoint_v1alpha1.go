@@ -99,6 +99,10 @@ func (bOps *backupAPIOps) create() (interface{}, error) {
 		return nil, CodedError(400, fmt.Sprintf("Failed to create snapshot '%v'", err))
 	}
 
+	if bkp.Spec.LocalSnap == true {
+		return "", nil
+	}
+
 	bkp.Name = bkp.Spec.SnapName + "-" + bkp.Spec.VolumeName
 
 	// find healthy CVR
