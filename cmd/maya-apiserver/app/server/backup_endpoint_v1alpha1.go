@@ -100,6 +100,7 @@ func (bOps *backupAPIOps) create() (interface{}, error) {
 	}
 
 	if bkp.Spec.LocalSnap == true {
+		klog.Infof("Local backup resource:'%s' created successfully", bkp.Spec.SnapName)
 		return "", nil
 	}
 
